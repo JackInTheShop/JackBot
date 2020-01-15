@@ -177,18 +177,15 @@ class ServerBackup(commands.Cog):
         await botmsg.edit(content=f'Creating {len(backup["categories"])} categories.')
         categories = []
         for category in backup['categories']:
-            print(category)
             new_category = await ctx.guild.create_category_channel(
                 name=category['name'],
                 overwrites=self.generate_overwrites(category['overwrites'],roles)
                 )
             categories.append(new_category)
-        print(categories)
+
         await botmsg.edit(content=f'Creating {len(backup["text_channels"])} text channels.')
         text_channels = []
         for channel in backup['text_channels']:
-            print(channel)
-            print(categories[channel['category']] if channel['category'] else None,)
             new_channel = await ctx.guild.create_text_channel(
                 name=channel['name'],
                 overwrites=self.generate_overwrites(channel['overwrites'],roles),
@@ -260,21 +257,18 @@ class ServerBackup(commands.Cog):
 
         await botmsg.edit(content='Server restored successfully.')
         if backup['icon_url']:
-            await ctx.send(f'Server Icon: {backup["icon_url"]}')
+            await ctx.send(f'Icon: {backup["icon_url"]}')
         if backup['splash_url']:
-            await ctx.send(f'Server Icon: {backup["splash_url"]}')
+            await ctx.send(f'Splash: {backup["splash_url"]}')
         if backup['banner_url']:
-            await ctx.send(f'Server Icon: {backup["banner_url"]}')
+            await ctx.send(f'Banner: {backup["banner_url"]}')
         if len(emojis) > 0:
-            await ctx.send('Emojis Added: ' + ', '.join([str(i) for i in emojis]))
+            await ctx.send('Emojis Added: ' + ' '.join([str(i) for i in emojis]))
         if len(backup['emojis']) > 0:
             await ctx.send('All Emotes:\n')
             for i in [backup['emojis'][i:i + 20] for i in range(0, len(backup['emojis']), 20)]:
-                await ctx.send('\n'.join([f'{j["name"]} — {j["url"]}' for j in i]))
-        print('Done.')
+                await ctx.send('\n'.join([f'{j["name"]} — <{j["url"]}>' for j in i]))
 
 
 def setup(bot):
     bot.add_cog(ServerBackup(bot))
-
-# https://discordapp.com/oauth2/authorize?client_id=632806608916709376&scope=bot
