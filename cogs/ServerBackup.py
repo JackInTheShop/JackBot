@@ -42,7 +42,7 @@ class ServerBackup(commands.Cog):
                 'permissions': role.permissions.value,
                 'colour': role.colour.value
                 }
-            if not role.is_default(): role_backup['members'] = [user.id for user in role.members]
+            # if not role.is_default(): role_backup['members'] = [user.id for user in role.members]
             backup['roles'].append(role_backup)
 
         backup['categories'] = []
@@ -162,7 +162,7 @@ class ServerBackup(commands.Cog):
         await ctx.guild.default_role.edit(permissions=discord.Permissions(backup['roles'][0]['permissions']))
 
         await botmsg.edit(content=f'Creating {len(backup["roles"])} roles.')
-        roles = [ctx.guild.default_role]
+        roles = []
         for role in backup['roles'][1:][::-1]:
             new_role = await ctx.guild.create_role(
                 name=role['name'],
@@ -172,6 +172,7 @@ class ServerBackup(commands.Cog):
                 mentionable=role['mentionable']
                 )
             roles.append(new_role)
+        roles = [ctx.guild.default_role] + roles[::-1]
 
         await botmsg.edit(content=f'Creating {len(backup["categories"])} categories.')
         categories = []
@@ -182,14 +183,16 @@ class ServerBackup(commands.Cog):
                 overwrites=self.generate_overwrites(category['overwrites'],roles)
                 )
             categories.append(new_category)
-
+        print(categories)
         await botmsg.edit(content=f'Creating {len(backup["text_channels"])} text channels.')
         text_channels = []
         for channel in backup['text_channels']:
+            print(channel)
+            print(categories[channel['category']] if channel['category'] else None,)
             new_channel = await ctx.guild.create_text_channel(
                 name=channel['name'],
                 overwrites=self.generate_overwrites(channel['overwrites'],roles),
-                category=categories[channel['category']] if channel['category'] else None,
+                category=categories[channel['category']] if channel['category'] is not None else None,
                 topic=channel['topic'],
                 slowmode_delay=channel['slowmode_delay'],
                 nsfw=channel['nsfw']
@@ -202,7 +205,7 @@ class ServerBackup(commands.Cog):
             new_channel = await ctx.guild.create_voice_channel(
                 name=channel['name'],
                 overwrites=self.generate_overwrites(channel['overwrites'],roles),
-                category=categories[channel['category']] if channel['category'] else None,
+                category=categories[channel['category']] if channel['category'] is not None else None,
                 bitrate=channel['bitrate'],
                 user_limit=channel['user_limit']
                 )
@@ -217,7 +220,7 @@ class ServerBackup(commands.Cog):
         emojis = []
         for emoji in backup['emojis']:
             emote = await self.bot.httpx.get(emoji['url'])
-            if not 'image' in icon.headers['content-type']:
+            if not 'image' in emote.headers['content-type']:
                 continue
             new_emoji = await ctx.guild.create_custom_emoji(
                 name=emoji['name'],
@@ -243,7 +246,7 @@ class ServerBackup(commands.Cog):
             afk_channel=backup['afk_channel'],
             afk_timeout=backup['afk_timeout'],
             verification_level=discord.VerificationLevel(backup['verification_level']),
-            default_notifications=discord.DefaultNotifications(backup['default_notifications']),
+            default_notifications=discord.NotificationLevel(backup['default_notifications']),
             explicit_content_filter=discord.ContentFilter(backup['explicit_content_filter']),
             system_channel=backup['system_channel'],
             system_channel_flags=discord.SystemChannelFlags(backup['system_channel_flags'])
