@@ -90,10 +90,10 @@ class ServerBackup(commands.Cog):
         r = await self.bot.httpx.post('https://mystb.in/documents',data=json.dumps(backup))
 
         if r.is_error:
-            await ctx.send('Backup was successful, but failed to upload to dpaste.com')
+            await ctx.send('Backup was successful, but failed to upload to mystb.in')
         else:
             key = json.loads(r.text)['key']
-            await ctx.send('Backup was successful! Your backup ID is `{key}` and can be directly found at <https://mystb.in/{key}>.'.format(key=key))
+            await ctx.send('Backup was successful! Your backup ID is **`{key}`** and can be directly found at <https://mystb.in/{key}>.'.format(key=key))
 
 
     def backup_overwrites(self,overwrites):
@@ -149,7 +149,7 @@ class ServerBackup(commands.Cog):
 
         await ctx.channel.edit(name='backup-contents')
 
-        to_delete = ctx.guild.channels + ctx.guild.roles
+        to_delete = ctx.guild.channels + ctx.guild.roles + list(ctx.guild.emojis)
         to_delete.remove(ctx.channel)
         to_delete.remove(ctx.guild.me.top_role)
         to_delete.remove(ctx.guild.default_role)
@@ -220,8 +220,7 @@ class ServerBackup(commands.Cog):
         emojis = []
         for emoji in backup['emojis']:
             emote = await self.bot.httpx.get(emoji['url'])
-            if not 'image' in emote.headers['content-type']:
-                continue
+            if not 'image' in emote.headers['content-type'] or int(emote.headers['content-length']) > 256000: continue
             new_emoji = await ctx.guild.create_custom_emoji(
                 name=emoji['name'],
                 image=emote.content
@@ -231,6 +230,11 @@ class ServerBackup(commands.Cog):
             if len(emojis) < 50: continue
             break
 
+        for user,reason in backup['bans']:
+            await ctx.guild.ban(
+                user=self.bot.get_user(user),
+                reason=reason)
+
         icon = await self.bot.httpx.get(backup['icon_url'])
         if not 'image' in icon.headers['content-type']:
             icon = None
@@ -238,6 +242,8 @@ class ServerBackup(commands.Cog):
             icon = icon.content
 
         await botmsg.edit(content='Updating server.')
+        system_channel_flags = discord.SystemChannelFlags()
+        system_channel_flags.value = backup['system_channel_flags']
         await ctx.guild.edit(
             name=backup['name'],
             description=backup['description'],
@@ -249,7 +255,7 @@ class ServerBackup(commands.Cog):
             default_notifications=discord.NotificationLevel(backup['default_notifications']),
             explicit_content_filter=discord.ContentFilter(backup['explicit_content_filter']),
             system_channel=backup['system_channel'],
-            system_channel_flags=discord.SystemChannelFlags(backup['system_channel_flags'])
+            system_channel_flags=system_channel_flags
             )
 
         await botmsg.edit(content='Server restored successfully.')
@@ -270,3 +276,5 @@ class ServerBackup(commands.Cog):
 
 def setup(bot):
     bot.add_cog(ServerBackup(bot))
+
+# https://discordapp.com/oauth2/authorize?client_id=632806608916709376&scope=bot
