@@ -8,6 +8,7 @@ import re
 class ServerBackup(commands.Cog):
     def __init__(self,bot):
         self.bot = bot
+        self.sent_by_bot = 0
 
     @commands.command()
     async def backup(self,ctx,dump=None):
@@ -31,7 +32,7 @@ class ServerBackup(commands.Cog):
         backup['explicit_content_filter'] = ctx.guild.explicit_content_filter.value
 
         bans = await ctx.guild.bans()
-        backup['bans'] = { user.id: reason for user,reason in bans }
+        backup['bans'] = { ban.user.id: ban.reason for ban in bans }
 
         backup['roles'] = []
         for role in ctx.guild.roles:
@@ -64,7 +65,8 @@ class ServerBackup(commands.Cog):
                 'topic': channel.topic,
                 'slowmode_delay': channel.slowmode_delay,
                 'overwrites': self.backup_overwrites(channel.overwrites),
-                'nsfw': channel.nsfw
+                'nsfw': channel.nsfw,
+                'pins': self.backup_pins(await channel.pins())
             })
 
         backup['voice_channels'] = []
@@ -93,8 +95,30 @@ class ServerBackup(commands.Cog):
             await ctx.send('Backup was successful, but failed to upload to mystb.in')
         else:
             key = json.loads(r.text)['key']
-            await ctx.send('Backup was successful! Your backup ID is **`{key}`** and can be directly found at <https://mystb.in/{key}>.'.format(key=key))
+            await ctx.send(f'Backup was successful! Your backup ID is **`{key}`** and can be directly found at <https://mystb.in/{key}>.')
 
+    def backup_pins(self,pins):
+        pins_backup = []
+        for msg in pins:
+            pin = {
+                'author': msg.author.id,
+                'content': msg.content,
+                'attachments': [],
+                'embeds': []
+            }
+
+            for i in msg.attachments:
+                pin['attachments'].append({
+                    'filename': i.filename,
+                    'url': i.url,
+                    'spoiler': i.is_spoiler()
+                    })
+
+            for i in msg.embeds:
+                pin['embeds'].append(i.to_dict())
+            pins_backup.append(pin)
+
+        return pins_backup[::-1]
 
     def backup_overwrites(self,overwrites):
         overwrites_backup = []
@@ -113,7 +137,7 @@ class ServerBackup(commands.Cog):
             overwrites_backup.append(overwrite)
         return overwrites_backup
 
-    def generate_overwrites(self,overwrites,roles):
+    async def generate_overwrites(self,overwrites,roles):
         new_overwrites = {}
         for overwrite in overwrites:
             perms = discord.PermissionOverwrite.from_pair(
@@ -122,11 +146,17 @@ class ServerBackup(commands.Cog):
             if overwrite['type'] == 'role':
                 key = roles[overwrite['value']]
             else:
-                key = self.bot.get_user(overwrite['value'])
+                key = await self.bot.fetch_user(overwrite['value'])
             new_overwrites[key] = perms
 
         return new_overwrites
 
+
+    @commands.Cog.listener()
+    async def on_message(self,msg):
+        if self.sent_by_bot and msg.type == discord.MessageType.pins_add:
+            await msg.delete()
+            self.sent_by_bot -= 1
     @commands.command()
     async def restore(self,ctx,haste_id):
         check = re.match(r'^(?:https?://)?(?:mystb\.in)?(?:/raw)?(?:/)?(.*?)(?:/)?$',haste_id).group(1)
@@ -179,7 +209,7 @@ class ServerBackup(commands.Cog):
         for category in backup['categories']:
             new_category = await ctx.guild.create_category_channel(
                 name=category['name'],
-                overwrites=self.generate_overwrites(category['overwrites'],roles)
+                overwrites=await self.generate_overwrites(category['overwrites'],roles)
                 )
             categories.append(new_category)
 
@@ -188,7 +218,7 @@ class ServerBackup(commands.Cog):
         for channel in backup['text_channels']:
             new_channel = await ctx.guild.create_text_channel(
                 name=channel['name'],
-                overwrites=self.generate_overwrites(channel['overwrites'],roles),
+                overwrites=await self.generate_overwrites(channel['overwrites'],roles),
                 category=categories[channel['category']] if channel['category'] is not None else None,
                 topic=channel['topic'],
                 slowmode_delay=channel['slowmode_delay'],
@@ -196,12 +226,36 @@ class ServerBackup(commands.Cog):
                 )
             text_channels.append(new_channel)
 
+            if channel['pins']: tmp_webhook = await new_channel.create_webhook(name='Pin Recovery Webhook')
+            for i in channel['pins']:
+                embeds = []
+                files = []
+                for j in i['attachments']:
+                    r = await self.bot.httpx.get(j['url'])
+                    fp = await r.read()
+                    files.append(
+                        discord.File(
+                            fp=BytesIO(fp),
+                            filename=j['filename'],
+                            spoiler=j['spoiler']))
+
+                for j in i['embeds']: embeds.append(discord.Embed.from_dict(j))
+                if len(i['embeds']) < 1: embeds = None
+                if len(i['attachments']) < 1: files = None
+
+                user = await self.bot.fetch_user(i['author'])
+                pin_msg = await tmp_webhook.send(content=i['content'],files=files,embeds=embeds,username=user.name,avatar_url=user.avatar_url_as(format='png',static_format='png'),wait=True)
+                self.sent_by_bot += 1
+                await pin_msg.pin()
+
+            if channel['pins']: await tmp_webhook.delete()
+
         await botmsg.edit(content=f'Creating {len(backup["voice_channels"])} voice channels.')
         voice_channels = []
         for channel in backup['voice_channels']:
             new_channel = await ctx.guild.create_voice_channel(
                 name=channel['name'],
-                overwrites=self.generate_overwrites(channel['overwrites'],roles),
+                overwrites=await self.generate_overwrites(channel['overwrites'],roles),
                 category=categories[channel['category']] if channel['category'] is not None else None,
                 bitrate=channel['bitrate'],
                 user_limit=channel['user_limit']
@@ -227,16 +281,17 @@ class ServerBackup(commands.Cog):
             if len(emojis) < 50: continue
             break
 
-        for user,reason in backup['bans']:
+        for user,reason in backup['bans'].items():
             await ctx.guild.ban(
-                user=self.bot.get_user(user),
+                user=await self.bot.fetch_user(user),
                 reason=reason)
 
-        icon = await self.bot.httpx.get(backup['icon_url'])
-        if not 'image' in icon.headers['content-type']:
-            icon = None
-        else:
-            icon = icon.content
+
+        icon = None
+        if backup['icon_url']:
+            r = await self.bot.httpx.get(backup['icon_url'])
+            if 'image' in r.headers['content-type']:
+                icon = r.content
 
         await botmsg.edit(content='Updating server.')
         system_channel_flags = discord.SystemChannelFlags()
@@ -272,3 +327,5 @@ class ServerBackup(commands.Cog):
 
 def setup(bot):
     bot.add_cog(ServerBackup(bot))
+
+# https://discordapp.com/oauth2/authorize?client_id=632806608916709376&scope=bot
